@@ -1,18 +1,20 @@
-# @bogeychan/elysia-oauth2
+# elysia-oauth2
+
+## This is a fork from original [@bogeychan/elysia-oauth2](https://github.com/bogeychan/elysia-oauth2) repository
 
 A plugin for [Elysia.js](https://elysiajs.com) for server-side [OAuth 2.0 Authorization Code Flow](https://www.oauth.com/oauth2-servers/server-side-apps/authorization-code)
 
 ## Installation
 
 ```bash
-bun add @bogeychan/elysia-oauth2
+bun add elysia-oauth2
 ```
 
 ## Usage
 
 ```ts
 import { Elysia } from 'elysia';
-import oauth2, { github } from '@bogeychan/elysia-oauth2';
+import oauth2, { github } from 'elysia-oauth2';
 import jsonwebtoken from 'jsonwebtoken'; // you can use any jwt plugin
 
 import { randomBytes } from 'crypto';
@@ -133,7 +135,7 @@ app
 ## Use predefined OAuth 2.0 providers
 
 ```ts
-import { azure, discord, github, ... } from '@bogeychan/elysia-oauth2';
+import { azure, discord, github, ... } from 'elysia-oauth2';
 ```
 
 - All available providers are listed inside the [providers](./src/providers) folder.
@@ -143,7 +145,7 @@ import { azure, discord, github, ... } from '@bogeychan/elysia-oauth2';
 ## Define your own OAuth 2.0 provider
 
 ```ts
-import oauth2, { TOAuth2Provider } from '@bogeychan/elysia-oauth2';
+import oauth2, { TOAuth2Provider } from 'elysia-oauth2';
 
 function myGithub(): TOAuth2Provider {
   return {
@@ -178,6 +180,10 @@ const auth = oauth2({
 ## Author
 
 [bogeychan](https://github.com/bogeychan)
+
+## Contributors
+
+[iagocalazans](https://github.com/iagocalazans)
 
 ## License
 
