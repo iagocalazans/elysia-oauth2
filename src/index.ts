@@ -378,7 +378,7 @@ const oauth2 = <Profiles extends string>({
             const auth = {...token, ...certificate}
             storage.set(req.request, (req.params as TOAuth2Params).name, auth)
 
-            req.setCookie('authorize', await req.jwt.sign(auth), {})
+            req.setCookie('authorize', await req.jwt.sign(auth), {maxAge: token.expires_in})
             req.set.status = 'Found'
             req.set.redirect = buildRedirectToUri(req.params)
             return { message: 'Found redirect' }
@@ -392,7 +392,7 @@ const oauth2 = <Profiles extends string>({
         }
 
         storage.set(req.request, (req.params as TOAuth2Params).name, token);
-        req.setCookie('authorize', await req.jwt.sign(token as any))
+        req.setCookie('authorize', await req.jwt.sign(token as any), {maxAge: token.expires_in})
         req.set.status = 'Found'
         req.set.redirect = buildRedirectToUri(req.params)
         return { message: 'Found redirect' }
@@ -427,11 +427,36 @@ const oauth2 = <Profiles extends string>({
               // ! must have for twitch as it could check token authenticity
               if (profile === 'twitch') {
                 const response = await fetch('https://id.twitch.tv/oauth2/validate', {
-                  headers: {Authorization: `OAuth ${token?.access_token}`}
+                  headers: {
+                    Authorization: `OAuth ${token?.access_token}`
+                  }
                 })
   
                 if (response.ok) {
                   return true
+                }
+                
+                const params = new URLSearchParams({
+                  client_id: Bun.env.TWITCH_OAUTH_CLIENT_ID,
+                  client_secret: Bun.env.TWITCH_CLIENT_SECRET,
+                  refresh_token: token.refresh_token,
+                  grant_type: 'refresh_token'
+                });
+
+                const newTokenResponse = await fetch('https://id.twitch.tv/oauth2/token', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    Accept: 'application/json'
+                  },
+                  body: params.toString()
+                });
+
+                if (newTokenResponse.ok) {
+                  const newToken = await newTokenResponse.json()
+                  storage.set(ctx.request, ('twitch' as TOAuth2Params['name']), newToken);
+                  ctx.setCookie('authorize', await ctx.jwt.sign(newToken as unknown))
+                  return true;
                 }
   
                 return false
