@@ -57,11 +57,11 @@ export interface OAuth2Storage<Profiles extends string> {
   /**
    * Get token from storage
    */
-  get(req: Request, name: Profiles, id: string): Promise<TOAuth2AccessToken | undefined>;
+  get(req: Request, name: Profiles): Promise<TOAuth2AccessToken | undefined>;
   /**
    * Delete token in storage (most likely a logout)
    */
-  delete(req: Request, name: Profiles, id: string): Promise<void>;
+  delete(req: Request, name: Profiles): Promise<void>;
 }
 
 /**
@@ -487,8 +487,8 @@ const oauth2 = <Profiles extends string>({
             return result;
           },
   
-          async tokenHeaders(profile: Profiles, id: string) {
-            const token = await storage.get(ctx.request, profile, id);
+          async tokenHeaders(profile: Profiles) {
+            const token = await storage.get(ctx.request, profile);
             return { Authorization: `Bearer ${token?.access_token}` };
           },
         } as TOAuth2Request<Profiles>;
