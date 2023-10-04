@@ -1,7 +1,7 @@
-import { Elysia } from 'elysia';
+import { Elysia, Context } from 'elysia';
 import { buildUrl, isTokenValid, redirect } from './utils';
-import { CookieOptions, cookie as cookieManager } from '@elysiajs/cookie';
-import { JWTOption, jwt as jsonWebToken } from '@elysiajs/jwt';
+import { cookie as elysiaCookie, CookieOptions } from '@elysiajs/cookie'
+import { jwt as elysiaJWT, JWTOption } from '@elysiajs/jwt'
 
 export type TOAuth2Request<Profile extends string> = {
   /**
@@ -40,8 +40,7 @@ export type TOAuth2AccessToken = {
   expires_in: number;
   access_token: string;
   created_at: number;
-  refresh_token?: string;
-  login?: string;
+  // refresh_token: string;
 };
 
 /**
@@ -53,15 +52,15 @@ export interface OAuth2Storage<Profiles extends string> {
   /**
    * Write token to storage (most likely a login)
    */
-  set(req: Request, name: Profiles, token: TOAuth2AccessToken): Promise<void>;
+  set(req: Context, name: Profiles, token: TOAuth2AccessToken): Promise<void>;
   /**
    * Get token from storage
    */
-  get(req: Request, name: Profiles, id: string): Promise<TOAuth2AccessToken | undefined>;
+  get(req: Context, name: Profiles): Promise<TOAuth2AccessToken | undefined>;
   /**
    * Delete token in storage (most likely a logout)
    */
-  delete(req: Request, name: Profiles, id: string): Promise<void>;
+  delete(req: Context, name: Profiles): Promise<void>;
 }
 
 /**
@@ -71,11 +70,15 @@ export interface OAuth2State<Profiles extends string> {
   /**
    * Generate a new unique state
    */
-  generate: (req: Request, name: Profiles) => string;
+  generate: (req: Request, name: Profiles) => string | Promise<string>;
   /**
    * Check if the state exists
    */
-  check: (req: Request, name: Profiles, state: string) => boolean;
+  check: (
+    req: Request,
+    name: Profiles,
+    state: string
+  ) => boolean | Promise<boolean>;
 }
 
 type TPluginParams<Profiles extends string> = {
@@ -83,8 +86,7 @@ type TPluginParams<Profiles extends string> = {
    * OAuth2 profiles
    *
    * @example
-   * import { github } from '@bogeychan/elysia-oauth2';
-import { profile } from '../../../../src/users/users.controller';
+   * import { github } from 'elysia-oauth2';
    *
    * const profiles = {
    *  github: {
@@ -121,12 +123,6 @@ import { profile } from '../../../../src/users/users.controller';
    */
   host?: string;
   /**
-   * The standard prefix of your application if it exists.
-   *
-   * @default "undefined"
-   */
-  prefix?: string;
-  /**
    * The `redirectTo` path (relative to the `host`) is called when, for example, the user has successfully logged in or logged out
    *
    * @default "/"
@@ -140,22 +136,22 @@ import { profile } from '../../../../src/users/users.controller';
    * @see OAuth2Storage
    */
   storage: OAuth2Storage<Profiles>;
-  /**
+    /**
    * The JWT options config values
    * 
    * ! It is important to customize this
    *
    * @default { name: 'jwt', secret: 'Fischl von Luftschloss Narfidort', exp: '1h' }
    */
-  jwt?: JWTOption;
-  /**
-   * The Cookie options config values
-   * 
-   * ! It is important to customize this
-   *
-   * @default { httpOnly: true, maxAge: 3600, secure: true, secret:  'Fischl von Luftschloss Narfidort', signed: true }
-   */
-  cookie?: CookieOptions;
+    jwt?: JWTOption;
+    /**
+     * The Cookie options config values
+     * 
+     * ! It is important to customize this
+     *
+     * @default { httpOnly: true, maxAge: 3600, secure: true, secret:  'Fischl von Luftschloss Narfidort', signed: true }
+     */
+    cookie?: CookieOptions;
 };
 
 /**
@@ -164,7 +160,6 @@ import { profile } from '../../../../src/users/users.controller';
 export type TOAuth2Provider = {
   auth: TOAuth2Url;
   token: TOAuth2Url;
-  profile: TOAuth2Url;
   // refresh: TOAuth2Url;
 
   clientId: string;
@@ -180,7 +175,6 @@ const oauth2 = <Profiles extends string>({
   host,
   redirectTo,
   storage,
-  prefix,
   jwt,
   cookie
 }: TPluginParams<Profiles>) => {
@@ -192,24 +186,6 @@ const oauth2 = <Profiles extends string>({
     authorized = '/login/:name/authorized';
   }
 
-  if (!jwt) {
-    jwt = {
-      name: 'jwt',
-      secret: 'Fischl von Luftschloss Narfidort',
-      exp: '1h'
-    };
-  }
-
-  if (!cookie) {
-    cookie = {
-      httpOnly: true,
-      maxAge: 3600,
-      secure: true,
-      secret:  'Fischl von Luftschloss Narfidort',
-      signed: true
-    }
-  }
-
   if (!logout) {
     logout = '/logout/:name';
   }
@@ -219,7 +195,21 @@ const oauth2 = <Profiles extends string>({
   }
 
   if (!redirectTo) {
-    redirectTo = '/user/:name/profile';
+    redirectTo = '/';
+  }
+
+  if (!jwt) {
+    jwt = {
+      name: 'jwt',
+      secret: 'Fischl von Luftschloss Narfidort'
+  };
+  }
+
+  if (!cookie) {
+    cookie = {
+      httpOnly: true,
+      maxAge: 7 * 86400,
+  };
   }
 
   type TOAuth2Params = TOAuth2ProviderContext<Profiles>['params'];
@@ -237,7 +227,7 @@ const oauth2 = <Profiles extends string>({
 
   function buildUri(template: string, name: string, external: boolean = true) {
     const uri = template.replace(':name', name);
-    return external ? `${protocol}://${host}${prefix || ""}${uri}` : `${prefix || ""}${uri}`;
+    return external ? `${protocol}://${host}${uri}` : uri;
   }
 
   function buildLoginUri(name: string, external: boolean = true) {
@@ -252,24 +242,26 @@ const oauth2 = <Profiles extends string>({
     return buildUri(authorized, name, true);
   }
 
-  function buildRedirectToUri({ name }: TOAuth2Params) {
-    return buildUri(redirectTo, name, true);
-  }
-
-
-  return (
-    (
-      new Elysia({
-        name: '@bogeychan/elysia-oauth2'
-      }) as InternalOAuth2Elysia<Profiles>
-    )
-      .use(
-        jsonWebToken(jwt)
-      )
-      .use(cookieManager(cookie))
+  return new Elysia({
+        name: 'elysia-oauth2',
+        seed: {
+          profiles: globalProfiles,
+          state,
+          login,
+          authorized,
+          logout,
+          host,
+          redirectTo,
+          storage,
+          jwt,
+          cookie
+        }
+      })
+      .use(elysiaCookie(cookie))
+      .use(elysiaJWT(jwt))
+    
       // >>> LOGIN <<<
       .get(login, async (req) => {
-        
         const context = resolveProvider(req.params);
 
         if (context instanceof Response) {
@@ -283,15 +275,18 @@ const oauth2 = <Profiles extends string>({
           redirect_uri: buildRedirectUri(req.params),
           response_type: 'code',
           response_mode: 'query',
-          state: state.generate(req.request, (req.params as TOAuth2Params).name)
+          state: await state.generate(
+            req.request,
+            (req.params as TOAuth2Params).name
+          )
         };
 
         const authUrl = buildUrl(
           provider.auth.url,
           { ...authParams, ...provider.auth.params },
           scope
-          );
-
+        );
+        
         return redirect(authUrl);
       })
 
@@ -311,11 +306,11 @@ const oauth2 = <Profiles extends string>({
         };
 
         if (
-          !state.check(
+          !(await state.check(
             req.request,
             (req.params as TOAuth2Params).name,
             callbackState
-          )
+          ))
         ) {
           throw new Error('State mismatch');
         }
@@ -334,14 +329,13 @@ const oauth2 = <Profiles extends string>({
           ...provider.token.params
         });
 
-        
         // ! required for reddit
         const credentials = btoa(
           provider.clientId + ':' + provider.clientSecret
-          );
-          
-          const response = await fetch(provider.token.url, {
-            method: 'POST',
+        );
+
+        const response = await fetch(provider.token.url, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             Accept: 'application/json',
@@ -349,8 +343,7 @@ const oauth2 = <Profiles extends string>({
           },
           body: params.toString()
         });
-        
-        
+
         if (
           !response.ok ||
           !response.headers.get('Content-Type')?.startsWith('application/json')
@@ -368,35 +361,11 @@ const oauth2 = <Profiles extends string>({
         token.expires_in = token.expires_in ?? 3600;
         token.created_at = Date.now() / 1000;
 
-        if ((req.params as TOAuth2Params).name === 'twitch') {
-          const response = await fetch('https://id.twitch.tv/oauth2/validate', {
-            headers: {Authorization: `OAuth ${token.access_token}`}
-          })
+        await storage.set(req, (req.params as TOAuth2Params).name, token);
 
-          if (response.ok) {
-            const certificate = await response.json()
-            const auth = {...token, ...certificate}
-            storage.set(req.request, (req.params as TOAuth2Params).name, auth)
-
-            req.setCookie('authorize', await req.jwt.sign(auth), {maxAge: token.expires_in})
-            req.set.status = 'Found'
-            req.set.redirect = buildRedirectToUri(req.params)
-            return { message: 'Found redirect' }
-          }
-
-          throw new Error(
-            `${response.status}: ${
-              response.statusText
-            }: ${await response.text()}`
-          );
-        }
-
-        storage.set(req.request, (req.params as TOAuth2Params).name, token);
-        req.setCookie('authorize', await req.jwt.sign(token as any), {maxAge: token.expires_in})
-        req.set.status = 'Found'
-        req.set.redirect = buildRedirectToUri(req.params)
-        return { message: 'Found redirect' }
-        // return redirect(buildRedirectToUri(req.params), req.headers);
+        req.set.redirect = redirectTo;
+        req.set.status = 'Found';
+        return '';
       })
 
       // >>> LOGOUT <<<
@@ -406,95 +375,50 @@ const oauth2 = <Profiles extends string>({
         if (context instanceof Response) {
           return context;
         }
-        
-        req.setCookie('authorize', null, { expires: new Date(Date.now()), maxAge: 0 })
 
-        req.set.status = 'OK'
-        req.set.redirect = buildRedirectToUri(req.params)
-        return { message: 'Logged out!' }
+        await storage.delete(req, (req.params as TOAuth2Params).name);
+
+        req.set.redirect = redirectTo;
+        req.set.status = 'Found';
+
+        return '';
       })
-
       .derive((ctx) => {
         return {
           async authorized(...profiles: Profiles[]) {
             for (const profile of profiles) {
-              const token: any = await ctx.jwt.verify(ctx.cookie.authorize)
-
-              if (!token) {
-                return false
-              }
-  
-              // ! must have for twitch as it could check token authenticity
-              if (profile === 'twitch') {
-                const response = await fetch('https://id.twitch.tv/oauth2/validate', {
-                  headers: {
-                    Authorization: `OAuth ${token?.access_token}`
-                  }
-                })
-  
-                if (response.ok) {
-                  return true
-                }
-                
-                const params = new URLSearchParams({
-                  client_id: Bun.env.TWITCH_OAUTH_CLIENT_ID,
-                  client_secret: Bun.env.TWITCH_CLIENT_SECRET,
-                  refresh_token: token.refresh_token,
-                  grant_type: 'refresh_token'
-                });
-
-                const newTokenResponse = await fetch('https://id.twitch.tv/oauth2/token', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    Accept: 'application/json'
-                  },
-                  body: params.toString()
-                });
-
-                if (newTokenResponse.ok) {
-                  const newToken = await newTokenResponse.json()
-                  storage.set(ctx.request, ('twitch' as TOAuth2Params['name']), newToken);
-                  ctx.setCookie('authorize', await ctx.jwt.sign(newToken as unknown))
-                  return true;
-                }
-  
-                return false
-              }
-  
-              if (!isTokenValid(token)) {
+              if (!isTokenValid(await storage.get(ctx, profile))) {
                 return false;
-              } 
+              }
             }
             return true;
           },
-  
+
           profiles<P extends Profiles = Profiles>(...profiles: P[]) {
             if (profiles.length === 0) {
               profiles = Object.keys(globalProfiles) as P[];
             }
-  
+
             const result = {} as TOAuth2ProfileUrlMap<P>;
-  
+
             for (const profile of profiles) {
               result[profile] = {
                 login: buildLoginUri(profile),
                 callback: buildRedirectUri({ name: profile }),
-                logout: buildLogoutUri(profile),
+                logout: buildLogoutUri(profile)
               };
             }
-  
+
             return result;
           },
-  
-          async tokenHeaders(profile: Profiles, id: string) {
-            const token = await storage.get(ctx.request, profile, id);
+
+          async tokenHeaders(profile: Profiles) {
+            const token = await storage.get(ctx, profile);
             return { Authorization: `Bearer ${token?.access_token}` };
-          },
+          }
         } as TOAuth2Request<Profiles>;
       })
-      
-  );
+
 };
 
 export default oauth2;
@@ -503,7 +427,7 @@ export * from './providers';
 // not relevant, just type declarations...
 
 type TOAuth2ProfileUrlMap<Profiles extends string> = {
-  [name in Profiles]: { login: string; callback: string; logout: string; };
+  [name in Profiles]: { login: string; callback: string; logout: string };
 };
 
 export type TOAuth2UrlParams = Record<string, string | number | boolean>;
@@ -525,22 +449,3 @@ type TOAuth2ProviderContext<Profiles extends string> = {
     name: Profiles;
   };
 };
-
-type InternalOAuth2Elysia<Profiles extends string> = Elysia<
-  '',
-  {
-    store: {};
-    params: {
-      name: Profiles
-    };
-    request: TOAuth2ProviderContext<Profiles>;
-    schema: {};
-    error: {};
-    meta: {
-      schema: {};
-      defs: {};
-      exposed: {};
-    };
-  }
->;
-
